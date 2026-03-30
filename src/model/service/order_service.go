@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,14 +36,20 @@ func CreateTransaction(req *request.CreateTransactionRequest) (*response.CreateT
 	gCreateTransactionLock.Lock()
 	defer gCreateTransactionLock.Unlock()
 
+	token := strings.ToUpper(strings.TrimSpace(req.Token))
+	currency := strings.ToUpper(strings.TrimSpace(req.Currency))
 	payAmount := math.MustParsePrecFloat64(req.Amount, 2)
+	rate := config.GetRateForCoin(strings.ToLower(token), strings.ToLower(currency))
+	if rate <= 0 {
+		return nil, constant.RateAmountErr
+	}
+
 	decimalPayAmount := decimal.NewFromFloat(payAmount)
-	decimalRate := decimal.NewFromFloat(config.GetUsdtRate())
-	decimalUsdt := decimalPayAmount.Div(decimalRate)
+	decimalTokenAmount := decimalPayAmount.Mul(decimal.NewFromFloat(rate))
 	if decimalPayAmount.Cmp(decimal.NewFromFloat(CnyMinimumPaymentAmount)) == -1 {
 		return nil, constant.PayAmountErr
 	}
-	if decimalUsdt.Cmp(decimal.NewFromFloat(UsdtMinimumPaymentAmount)) == -1 {
+	if decimalTokenAmount.Cmp(decimal.NewFromFloat(UsdtMinimumPaymentAmount)) == -1 {
 		return nil, constant.PayAmountErr
 	}
 
@@ -62,35 +69,37 @@ func CreateTransaction(req *request.CreateTransactionRequest) (*response.CreateT
 		return nil, constant.NotAvailableWalletAddress
 	}
 
-	tradeId := GenerateCode()
-	amount := math.MustParsePrecFloat64(decimalUsdt.InexactFloat64(), 2)
-	availableToken, availableAmount, err := ReserveAvailableWalletAndAmount(tradeId, amount, walletAddress)
+	tradeID := GenerateCode()
+	amount := math.MustParsePrecFloat64(decimalTokenAmount.InexactFloat64(), 2)
+	availableAddress, availableAmount, err := ReserveAvailableWalletAndAmount(tradeID, token, amount, walletAddress)
 	if err != nil {
 		return nil, err
 	}
-	if availableToken == "" {
+	if availableAddress == "" {
 		return nil, constant.NotAvailableAmountErr
 	}
 
 	tx := dao.Mdb.Begin()
 	order := &mdb.Orders{
-		TradeId:      tradeId,
-		OrderId:      req.OrderId,
-		Amount:       req.Amount,
-		ActualAmount: availableAmount,
-		Token:        availableToken,
-		Status:       mdb.StatusWaitPay,
-		NotifyUrl:    req.NotifyUrl,
-		RedirectUrl:  req.RedirectUrl,
+		TradeId:        tradeID,
+		OrderId:        req.OrderId,
+		Amount:         req.Amount,
+		Currency:       currency,
+		ActualAmount:   availableAmount,
+		ReceiveAddress: availableAddress,
+		Token:          token,
+		Status:         mdb.StatusWaitPay,
+		NotifyUrl:      req.NotifyUrl,
+		RedirectUrl:    req.RedirectUrl,
 	}
 	if err = data.CreateOrderWithTransaction(tx, order); err != nil {
 		tx.Rollback()
-		_ = data.UnLockTransaction(availableToken, availableAmount)
+		_ = data.UnLockTransactionByTradeId(tradeID)
 		return nil, err
 	}
 	if err = tx.Commit().Error; err != nil {
 		tx.Rollback()
-		_ = data.UnLockTransaction(availableToken, availableAmount)
+		_ = data.UnLockTransactionByTradeId(tradeID)
 		return nil, err
 	}
 
@@ -99,7 +108,9 @@ func CreateTransaction(req *request.CreateTransactionRequest) (*response.CreateT
 		TradeId:        order.TradeId,
 		OrderId:        order.OrderId,
 		Amount:         order.Amount,
+		Currency:       order.Currency,
 		ActualAmount:   order.ActualAmount,
+		ReceiveAddress: order.ReceiveAddress,
 		Token:          order.Token,
 		ExpirationTime: expirationTime,
 		PaymentUrl:     fmt.Sprintf("%s/pay/checkout-counter/%s", config.GetAppUri(), order.TradeId),
@@ -137,22 +148,22 @@ func OrderProcessing(req *request.OrderProcessingRequest) error {
 		return err
 	}
 
-	if err = data.UnLockTransaction(req.Token, req.Amount); err != nil {
+	if err = data.UnLockTransaction(req.ReceiveAddress, req.Token, req.Amount); err != nil {
 		log.Sugar.Warnf("[order] unlock transaction after pay success failed, trade_id=%s, err=%v", req.TradeId, err)
 	}
 	return nil
 }
 
-// ReserveAvailableWalletAndAmount finds and locks a token+amount pair.
-func ReserveAvailableWalletAndAmount(tradeId string, amount float64, walletAddress []mdb.WalletAddress) (string, float64, error) {
-	availableToken := ""
+// ReserveAvailableWalletAndAmount finds and locks an address+token+amount pair.
+func ReserveAvailableWalletAndAmount(tradeID string, token string, amount float64, walletAddress []mdb.WalletAddress) (string, float64, error) {
+	availableAddress := ""
 	availableAmount := amount
 
 	tryLockWalletFunc := func(targetAmount float64) (string, error) {
 		for _, address := range walletAddress {
-			err := data.LockTransaction(address.Token, tradeId, targetAmount, config.GetOrderExpirationTimeDuration())
+			err := data.LockTransaction(address.Address, token, tradeID, targetAmount, config.GetOrderExpirationTimeDuration())
 			if err == nil {
-				return address.Token, nil
+				return address.Address, nil
 			}
 			if errors.Is(err, data.ErrTransactionLocked) {
 				continue
@@ -163,20 +174,20 @@ func ReserveAvailableWalletAndAmount(tradeId string, amount float64, walletAddre
 	}
 
 	for i := 0; i < IncrementalMaximumNumber; i++ {
-		token, err := tryLockWalletFunc(availableAmount)
+		address, err := tryLockWalletFunc(availableAmount)
 		if err != nil {
 			return "", 0, err
 		}
-		if token == "" {
+		if address == "" {
 			decimalOldAmount := decimal.NewFromFloat(availableAmount)
 			decimalIncr := decimal.NewFromFloat(UsdtAmountPerIncrement)
 			availableAmount = decimalOldAmount.Add(decimalIncr).InexactFloat64()
 			continue
 		}
-		availableToken = token
+		availableAddress = address
 		break
 	}
-	return availableToken, availableAmount, nil
+	return availableAddress, availableAmount, nil
 }
 
 // GenerateCode creates a unique trade id.

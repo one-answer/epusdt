@@ -6,8 +6,8 @@ const (
 )
 
 type WalletAddress struct {
-	Token  string `gorm:"column:token;uniqueIndex:wallet_address_token_uindex" json:"token"`
-	Status int64  `gorm:"column:status;default:1" json:"status"`
+	Address string `gorm:"column:address;uniqueIndex:wallet_address_address_uindex" json:"address"`
+	Status  int64  `gorm:"column:status;default:1" json:"status"`
 	BaseModel
 }
 

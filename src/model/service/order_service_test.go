@@ -13,6 +13,16 @@ import (
 	"github.com/assimon/luuu/util/constant"
 )
 
+func newCreateTransactionRequest(orderID string, amount float64) *request.CreateTransactionRequest {
+	return &request.CreateTransactionRequest{
+		OrderId:   orderID,
+		Currency:  "CNY",
+		Token:     "USDT",
+		Amount:    amount,
+		NotifyUrl: "https://merchant.example/callback",
+	}
+}
+
 func TestCreateTransactionAssignsIncrementedAmountsAndLocks(t *testing.T) {
 	cleanup := testutil.SetupTestDatabases(t)
 	defer cleanup()
@@ -21,22 +31,11 @@ func TestCreateTransactionAssignsIncrementedAmountsAndLocks(t *testing.T) {
 		t.Fatalf("add wallet: %v", err)
 	}
 
-	req1 := &request.CreateTransactionRequest{
-		OrderId:   "order_1",
-		Amount:    1,
-		NotifyUrl: "https://merchant.example/callback",
-	}
-	req2 := &request.CreateTransactionRequest{
-		OrderId:   "order_2",
-		Amount:    1,
-		NotifyUrl: "https://merchant.example/callback",
-	}
-
-	resp1, err := CreateTransaction(req1)
+	resp1, err := CreateTransaction(newCreateTransactionRequest("order_1", 1))
 	if err != nil {
 		t.Fatalf("create first transaction: %v", err)
 	}
-	resp2, err := CreateTransaction(req2)
+	resp2, err := CreateTransaction(newCreateTransactionRequest("order_2", 1))
 	if err != nil {
 		t.Fatalf("create second transaction: %v", err)
 	}
@@ -47,11 +46,14 @@ func TestCreateTransactionAssignsIncrementedAmountsAndLocks(t *testing.T) {
 	if got := fmt.Sprintf("%.2f", resp2.ActualAmount); got != "1.01" {
 		t.Fatalf("second actual amount = %s, want 1.01", got)
 	}
-	if resp1.Token != "wallet_1" || resp2.Token != "wallet_1" {
-		t.Fatalf("unexpected wallet tokens: %s, %s", resp1.Token, resp2.Token)
+	if resp1.ReceiveAddress != "wallet_1" || resp2.ReceiveAddress != "wallet_1" {
+		t.Fatalf("unexpected receive addresses: %s, %s", resp1.ReceiveAddress, resp2.ReceiveAddress)
+	}
+	if resp1.Token != "USDT" || resp2.Token != "USDT" {
+		t.Fatalf("unexpected tokens: %s, %s", resp1.Token, resp2.Token)
 	}
 
-	tradeID1, err := data.GetTradeIdByWalletAddressAndAmount(resp1.Token, resp1.ActualAmount)
+	tradeID1, err := data.GetTradeIdByWalletAddressAndAmountAndToken(resp1.ReceiveAddress, resp1.Token, resp1.ActualAmount)
 	if err != nil {
 		t.Fatalf("get first runtime lock: %v", err)
 	}
@@ -59,7 +61,7 @@ func TestCreateTransactionAssignsIncrementedAmountsAndLocks(t *testing.T) {
 		t.Fatalf("first runtime lock = %s, want %s", tradeID1, resp1.TradeId)
 	}
 
-	tradeID2, err := data.GetTradeIdByWalletAddressAndAmount(resp2.Token, resp2.ActualAmount)
+	tradeID2, err := data.GetTradeIdByWalletAddressAndAmountAndToken(resp2.ReceiveAddress, resp2.Token, resp2.ActualAmount)
 	if err != nil {
 		t.Fatalf("get second runtime lock: %v", err)
 	}
@@ -76,16 +78,13 @@ func TestOrderProcessingMarksPaidAndReleasesLock(t *testing.T) {
 		t.Fatalf("add wallet: %v", err)
 	}
 
-	resp, err := CreateTransaction(&request.CreateTransactionRequest{
-		OrderId:   "order_1",
-		Amount:    1,
-		NotifyUrl: "https://merchant.example/callback",
-	})
+	resp, err := CreateTransaction(newCreateTransactionRequest("order_1", 1))
 	if err != nil {
 		t.Fatalf("create transaction: %v", err)
 	}
 
 	err = OrderProcessing(&request.OrderProcessingRequest{
+		ReceiveAddress:     resp.ReceiveAddress,
 		Token:              resp.Token,
 		TradeId:            resp.TradeId,
 		Amount:             resp.ActualAmount,
@@ -109,7 +108,7 @@ func TestOrderProcessingMarksPaidAndReleasesLock(t *testing.T) {
 		t.Fatalf("block transaction id = %s, want block_1", order.BlockTransactionId)
 	}
 
-	tradeID, err := data.GetTradeIdByWalletAddressAndAmount(resp.Token, resp.ActualAmount)
+	tradeID, err := data.GetTradeIdByWalletAddressAndAmountAndToken(resp.ReceiveAddress, resp.Token, resp.ActualAmount)
 	if err != nil {
 		t.Fatalf("get runtime lock after processing: %v", err)
 	}
@@ -126,16 +125,13 @@ func TestOrderProcessingRejectsDuplicateBlockForSameOrder(t *testing.T) {
 		t.Fatalf("add wallet: %v", err)
 	}
 
-	resp, err := CreateTransaction(&request.CreateTransactionRequest{
-		OrderId:   "order_1",
-		Amount:    1,
-		NotifyUrl: "https://merchant.example/callback",
-	})
+	resp, err := CreateTransaction(newCreateTransactionRequest("order_1", 1))
 	if err != nil {
 		t.Fatalf("create transaction: %v", err)
 	}
 
 	req := &request.OrderProcessingRequest{
+		ReceiveAddress:     resp.ReceiveAddress,
 		Token:              resp.Token,
 		TradeId:            resp.TradeId,
 		Amount:             resp.ActualAmount,
@@ -170,11 +166,7 @@ func TestOrderProcessingDoesNotReviveExpiredOrder(t *testing.T) {
 		t.Fatalf("add wallet: %v", err)
 	}
 
-	resp, err := CreateTransaction(&request.CreateTransactionRequest{
-		OrderId:   "order_1",
-		Amount:    1,
-		NotifyUrl: "https://merchant.example/callback",
-	})
+	resp, err := CreateTransaction(newCreateTransactionRequest("order_1", 1))
 	if err != nil {
 		t.Fatalf("create transaction: %v", err)
 	}
@@ -186,6 +178,7 @@ func TestOrderProcessingDoesNotReviveExpiredOrder(t *testing.T) {
 	}
 
 	err = OrderProcessing(&request.OrderProcessingRequest{
+		ReceiveAddress:     resp.ReceiveAddress,
 		Token:              resp.Token,
 		TradeId:            resp.TradeId,
 		Amount:             resp.ActualAmount,
@@ -218,19 +211,11 @@ func TestOrderProcessingOnlyOneOrderClaimsABlockTransaction(t *testing.T) {
 		t.Fatalf("add wallet: %v", err)
 	}
 
-	resp1, err := CreateTransaction(&request.CreateTransactionRequest{
-		OrderId:   "order_1",
-		Amount:    1,
-		NotifyUrl: "https://merchant.example/callback",
-	})
+	resp1, err := CreateTransaction(newCreateTransactionRequest("order_1", 1))
 	if err != nil {
 		t.Fatalf("create first transaction: %v", err)
 	}
-	resp2, err := CreateTransaction(&request.CreateTransactionRequest{
-		OrderId:   "order_2",
-		Amount:    2,
-		NotifyUrl: "https://merchant.example/callback",
-	})
+	resp2, err := CreateTransaction(newCreateTransactionRequest("order_2", 2))
 	if err != nil {
 		t.Fatalf("create second transaction: %v", err)
 	}
@@ -239,24 +224,26 @@ func TestOrderProcessingOnlyOneOrderClaimsABlockTransaction(t *testing.T) {
 	errs := make(chan error, 2)
 	var wg sync.WaitGroup
 	for _, tc := range []struct {
+		address string
 		token   string
 		tradeID string
 		amount  float64
 	}{
-		{token: resp1.Token, tradeID: resp1.TradeId, amount: resp1.ActualAmount},
-		{token: resp2.Token, tradeID: resp2.TradeId, amount: resp2.ActualAmount},
+		{address: resp1.ReceiveAddress, token: resp1.Token, tradeID: resp1.TradeId, amount: resp1.ActualAmount},
+		{address: resp2.ReceiveAddress, token: resp2.Token, tradeID: resp2.TradeId, amount: resp2.ActualAmount},
 	} {
 		wg.Add(1)
-		go func(token, tradeID string, amount float64) {
+		go func(address, token, tradeID string, amount float64) {
 			defer wg.Done()
 			<-start
 			errs <- OrderProcessing(&request.OrderProcessingRequest{
+				ReceiveAddress:     address,
 				Token:              token,
 				TradeId:            tradeID,
 				Amount:             amount,
 				BlockTransactionId: "shared_block",
 			})
-		}(tc.token, tc.tradeID, tc.amount)
+		}(tc.address, tc.token, tc.tradeID, tc.amount)
 	}
 
 	close(start)

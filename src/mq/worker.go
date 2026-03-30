@@ -75,7 +75,7 @@ func processExpiredOrders() {
 			if !expired {
 				continue
 			}
-			if err = data.UnLockTransaction(order.Token, order.ActualAmount); err != nil {
+			if err = data.UnLockTransaction(order.ReceiveAddress, order.Token, order.ActualAmount); err != nil {
 				log.Sugar.Warnf("[mq] release expired transaction lock failed, trade_id=%s, err=%v", order.TradeId, err)
 			}
 		}
@@ -147,6 +147,7 @@ func sendOrderCallback(order *mdb.Orders) error {
 		OrderId:            order.OrderId,
 		Amount:             order.Amount,
 		ActualAmount:       order.ActualAmount,
+		ReceiveAddress:     order.ReceiveAddress,
 		Token:              order.Token,
 		BlockTransactionId: order.BlockTransactionId,
 		Status:             mdb.StatusPaySuccess,

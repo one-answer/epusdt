@@ -13,7 +13,9 @@ type Orders struct {
 	OrderId            string  `gorm:"column:order_id;uniqueIndex:orders_order_id_uindex" json:"order_id"`
 	BlockTransactionId string  `gorm:"index:orders_block_transaction_id_index;column:block_transaction_id" json:"block_transaction_id"`
 	Amount             float64 `gorm:"column:amount" json:"amount"`
+	Currency           string  `gorm:"column:currency" json:"currency"`
 	ActualAmount       float64 `gorm:"column:actual_amount" json:"actual_amount"`
+	ReceiveAddress     string  `gorm:"column:receive_address" json:"receive_address"`
 	Token              string  `gorm:"column:token" json:"token"`
 	Status             int     `gorm:"column:status;default:1" json:"status"`
 	NotifyUrl          string  `gorm:"column:notify_url" json:"notify_url"`

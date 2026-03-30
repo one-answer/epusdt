@@ -2,27 +2,33 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/assimon/luuu/util/http_client"
 	"github.com/spf13/viper"
+	"github.com/tidwall/gjson"
 )
 
 var (
-	AppDebug     bool
-	MysqlDns     string
-	RuntimePath  string
-	LogSavePath  string
-	StaticPath   string
-	TgBotToken   string
-	TgProxy      string
-	TgManage     int64
-	UsdtRate     float64
-	BuildVersion = "0.0.0-dev"
-	BuildCommit  = "none"
-	BuildDate    = "unknown"
+	AppDebug          bool
+	MysqlDns          string
+	RuntimePath       string
+	LogSavePath       string
+	StaticPath        string
+	TgBotToken        string
+	TgProxy           string
+	TgManage          int64
+	UsdtRate          float64
+	RateApiUrl        string
+	TRON_GRID_API_KEY string
+	BuildVersion      = "0.0.0-dev"
+	BuildCommit       = "none"
+	BuildDate         = "unknown"
 )
 
 func Init() {
@@ -38,27 +44,21 @@ func Init() {
 	}
 	AppDebug = viper.GetBool("app_debug")
 	StaticPath = viper.GetString("static_path")
-	RuntimePath = fmt.Sprintf(
-		"%s%s",
-		gwd,
-		viper.GetString("runtime_root_path"))
-	LogSavePath = fmt.Sprintf(
-		"%s%s",
-		RuntimePath,
-		viper.GetString("log_save_path"))
+	RuntimePath = fmt.Sprintf("%s%s", gwd, viper.GetString("runtime_root_path"))
+	LogSavePath = fmt.Sprintf("%s%s", RuntimePath, viper.GetString("log_save_path"))
 	mustMkdir(RuntimePath)
 	mustMkdir(LogSavePath)
 	MysqlDns = fmt.Sprintf("%s:%s@tcp(%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
 		url.QueryEscape(viper.GetString("mysql_user")),
 		url.QueryEscape(viper.GetString("mysql_passwd")),
-		fmt.Sprintf(
-			"%s:%s",
-			viper.GetString("mysql_host"),
-			viper.GetString("mysql_port")),
+		fmt.Sprintf("%s:%s", viper.GetString("mysql_host"), viper.GetString("mysql_port")),
 		viper.GetString("mysql_database"))
 	TgBotToken = viper.GetString("tg_bot_token")
 	TgProxy = viper.GetString("tg_proxy")
 	TgManage = viper.GetInt64("tg_manage")
+
+	RateApiUrl = GetRateApiUrl()
+	TRON_GRID_API_KEY = viper.GetString("tron_grid_api_key")
 }
 
 func mustMkdir(path string) {
@@ -93,6 +93,73 @@ func GetAppUri() string {
 
 func GetApiAuthToken() string {
 	return viper.GetString("api_auth_token")
+}
+
+func GetRateApiUrl() string {
+	rateURL := viper.GetString("api_rate_url")
+	if rateURL == "" {
+		rateURL = os.Getenv("API_RATE_URL")
+	}
+	if rateURL == "" {
+		log.Println("api_rate_url is empty")
+	}
+	RateApiUrl = rateURL
+	return rateURL
+}
+
+func GetRateForCoin(coin string, base string) float64 {
+	coin = strings.ToLower(strings.TrimSpace(coin))
+	base = strings.ToLower(strings.TrimSpace(base))
+	if coin == "" || base == "" {
+		return 0
+	}
+	if coin == base {
+		return 1
+	}
+	if coin == "usdt" {
+		switch base {
+		case "usd":
+			return 1
+		case "cny":
+			usdtRate := GetUsdtRate()
+			if usdtRate > 0 {
+				return 1 / usdtRate
+			}
+		}
+	}
+
+	baseURL := RateApiUrl
+	if baseURL == "" {
+		baseURL = GetRateApiUrl()
+	}
+	if baseURL == "" {
+		log.Printf("rate api url is empty")
+		return 0.0
+	}
+	if baseURL[len(baseURL)-1] != '/' {
+		baseURL += "/"
+	}
+
+	client := http_client.GetHttpClient()
+	resp, err := client.R().Get(baseURL + fmt.Sprintf("%s.json", base))
+	if err != nil {
+		log.Printf("call rate api error: %s", err.Error())
+		return 0.0
+	}
+	if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
+		log.Printf("call rate api unexpected status: %s", resp.Status())
+		return 0.0
+	}
+
+	targetRate := 0.0
+	gjson.GetBytes(resp.Body(), base).ForEach(func(key, value gjson.Result) bool {
+		if key.String() == coin {
+			targetRate = value.Float()
+			return false
+		}
+		return true
+	})
+	return targetRate
 }
 
 func GetUsdtRate() float64 {

@@ -20,13 +20,15 @@ func TestProcessExpiredOrdersExpiresWaitingOrdersAndReleasesLocks(t *testing.T) 
 	defer cleanup()
 
 	order := &mdb.Orders{
-		TradeId:      "trade_expired",
-		OrderId:      "order_expired",
-		Amount:       1,
-		ActualAmount: 1,
-		Token:        "wallet_1",
-		Status:       mdb.StatusWaitPay,
-		NotifyUrl:    "https://merchant.example/callback",
+		TradeId:        "trade_expired",
+		OrderId:        "order_expired",
+		Amount:         1,
+		Currency:       "CNY",
+		ActualAmount:   1,
+		ReceiveAddress: "wallet_1",
+		Token:          "USDT",
+		Status:         mdb.StatusWaitPay,
+		NotifyUrl:      "https://merchant.example/callback",
 	}
 	if err := dao.Mdb.Create(order).Error; err != nil {
 		t.Fatalf("create expired order: %v", err)
@@ -34,23 +36,25 @@ func TestProcessExpiredOrdersExpiresWaitingOrdersAndReleasesLocks(t *testing.T) 
 	if err := dao.Mdb.Model(order).UpdateColumn("created_at", time.Now().Add(-20*time.Minute)).Error; err != nil {
 		t.Fatalf("age expired order: %v", err)
 	}
-	if err := data.LockTransaction(order.Token, order.TradeId, order.ActualAmount, time.Hour); err != nil {
+	if err := data.LockTransaction(order.ReceiveAddress, order.Token, order.TradeId, order.ActualAmount, time.Hour); err != nil {
 		t.Fatalf("lock expired order: %v", err)
 	}
 
 	recentOrder := &mdb.Orders{
-		TradeId:      "trade_recent",
-		OrderId:      "order_recent",
-		Amount:       1,
-		ActualAmount: 1.01,
-		Token:        "wallet_1",
-		Status:       mdb.StatusWaitPay,
-		NotifyUrl:    "https://merchant.example/callback",
+		TradeId:        "trade_recent",
+		OrderId:        "order_recent",
+		Amount:         1,
+		Currency:       "CNY",
+		ActualAmount:   1.01,
+		ReceiveAddress: "wallet_1",
+		Token:          "USDT",
+		Status:         mdb.StatusWaitPay,
+		NotifyUrl:      "https://merchant.example/callback",
 	}
 	if err := dao.Mdb.Create(recentOrder).Error; err != nil {
 		t.Fatalf("create recent order: %v", err)
 	}
-	if err := data.LockTransaction(recentOrder.Token, recentOrder.TradeId, recentOrder.ActualAmount, time.Hour); err != nil {
+	if err := data.LockTransaction(recentOrder.ReceiveAddress, recentOrder.Token, recentOrder.TradeId, recentOrder.ActualAmount, time.Hour); err != nil {
 		t.Fatalf("lock recent order: %v", err)
 	}
 
@@ -63,7 +67,7 @@ func TestProcessExpiredOrdersExpiresWaitingOrdersAndReleasesLocks(t *testing.T) 
 	if expired.Status != mdb.StatusExpired {
 		t.Fatalf("expired order status = %d, want %d", expired.Status, mdb.StatusExpired)
 	}
-	lockTradeID, err := data.GetTradeIdByWalletAddressAndAmount(order.Token, order.ActualAmount)
+	lockTradeID, err := data.GetTradeIdByWalletAddressAndAmountAndToken(order.ReceiveAddress, order.Token, order.ActualAmount)
 	if err != nil {
 		t.Fatalf("expired order lock lookup: %v", err)
 	}
@@ -78,7 +82,7 @@ func TestProcessExpiredOrdersExpiresWaitingOrdersAndReleasesLocks(t *testing.T) 
 	if recent.Status != mdb.StatusWaitPay {
 		t.Fatalf("recent order status = %d, want %d", recent.Status, mdb.StatusWaitPay)
 	}
-	lockTradeID, err = data.GetTradeIdByWalletAddressAndAmount(recentOrder.Token, recentOrder.ActualAmount)
+	lockTradeID, err = data.GetTradeIdByWalletAddressAndAmountAndToken(recentOrder.ReceiveAddress, recentOrder.Token, recentOrder.ActualAmount)
 	if err != nil {
 		t.Fatalf("recent order lock lookup: %v", err)
 	}
@@ -95,8 +99,10 @@ func TestProcessExpiredOrdersKeepsPaidOrdersPaid(t *testing.T) {
 		TradeId:            "trade_paid",
 		OrderId:            "order_paid",
 		Amount:             1,
+		Currency:           "CNY",
 		ActualAmount:       1,
-		Token:              "wallet_1",
+		ReceiveAddress:     "wallet_1",
+		Token:              "USDT",
 		Status:             mdb.StatusPaySuccess,
 		NotifyUrl:          "https://merchant.example/callback",
 		BlockTransactionId: "block_paid",
@@ -141,8 +147,10 @@ func TestDispatchPendingCallbacksHonorsBackoffAndPersistsSuccess(t *testing.T) {
 		TradeId:            "trade_callback",
 		OrderId:            "order_callback",
 		Amount:             1,
+		Currency:           "CNY",
 		ActualAmount:       1,
-		Token:              "wallet_1",
+		ReceiveAddress:     "wallet_1",
+		Token:              "USDT",
 		Status:             mdb.StatusPaySuccess,
 		NotifyUrl:          server.URL,
 		BlockTransactionId: "block_callback",
