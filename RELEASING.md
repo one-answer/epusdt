@@ -67,4 +67,4 @@ The resulting artifacts will be generated under `src/dist/`.
 
 If you use tags like `v1.2.3-rc1`, GoReleaser will mark the GitHub release as a prerelease.
 
-If you want the final `v1.2.3` release notes to compare cleanly against the previous stable release, avoid keeping old `rc` tags around longer than needed.
+For a final tag like `v1.2.3`, the release workflow forces GoReleaser to compare against the previous stable tag instead of the latest `rc` tag. This keeps the final changelog focused on stable-to-stable changes.
