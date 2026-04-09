@@ -1,10 +1,15 @@
 package dao
 
 import (
+	"crypto/tls"
+	"fmt"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/assimon/luuu/config"
 	"github.com/assimon/luuu/util/log"
+	mysqlDriver "github.com/go-sql-driver/mysql"
 	"github.com/gookit/color"
 	"github.com/spf13/viper"
 	"gorm.io/driver/mysql"
@@ -14,10 +19,19 @@ import (
 	"gorm.io/gorm/schema"
 )
 
+var (
+	tidbTLSRegisterOnce sync.Once
+	tidbTLSRegisterErr  error
+)
+
 // MysqlInit 数据库初始化
 func MysqlInit() error {
+	if err := ensureTiDBTLSConfig(); err != nil {
+		return err
+	}
+
 	var err error
-	Mdb, err = gorm.Open(mysql.Open(config.MysqlDns), &gorm.Config{
+	Mdb, err = gorm.Open(buildMySQLDialector(), &gorm.Config{
 		NamingStrategy: schema.NamingStrategy{
 			TablePrefix:   viper.GetString("mysql_table_prefix"),
 			SingularTable: true,
@@ -53,4 +67,43 @@ func MysqlInit() error {
 	}
 	log.Sugar.Debug("[store_db] mysql connDB success")
 	return nil
+}
+
+func buildMySQLDialector() gorm.Dialector {
+	if strings.EqualFold(strings.TrimSpace(viper.GetString("db_type")), "tidb") {
+		return mysql.New(mysql.Config{
+			DSN:               config.MysqlDns,
+			DefaultStringSize: 191,
+		})
+	}
+	return mysql.Open(config.MysqlDns)
+}
+
+func ensureTiDBTLSConfig() error {
+	if !strings.EqualFold(strings.TrimSpace(viper.GetString("db_type")), "tidb") {
+		return nil
+	}
+
+	tidbTLSRegisterOnce.Do(func() {
+		serverName := strings.TrimSpace(viper.GetString("tidb_tls_server_name"))
+		if serverName == "" {
+			serverName = strings.TrimSpace(viper.GetString("mysql_host"))
+		}
+		if serverName == "" {
+			tidbTLSRegisterErr = fmt.Errorf("tidb_tls_server_name or mysql_host is required when db_type=tidb")
+			return
+		}
+
+		tlsConfigName := config.MySQLTLSConfigName
+		if tlsConfigName == "" {
+			tlsConfigName = "tidb"
+		}
+
+		tidbTLSRegisterErr = mysqlDriver.RegisterTLSConfig(tlsConfigName, &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			ServerName: serverName,
+		})
+	})
+
+	return tidbTLSRegisterErr
 }

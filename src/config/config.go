@@ -24,6 +24,7 @@ var (
 	LogSavePath        string
 	StaticPath         string
 	StaticFilePath     string
+	MySQLTLSConfigName string
 	TgBotToken         string
 	TgProxy            string
 	TgManage           int64
@@ -62,11 +63,7 @@ func Init() {
 	LogSavePath = resolvePathFromBase(RuntimePath, viper.GetString("log_save_path"), filepath.Join(RuntimePath, "logs"))
 	mustMkdir(RuntimePath)
 	mustMkdir(LogSavePath)
-	MysqlDns = fmt.Sprintf("%s:%s@tcp(%s)/%s?charset=utf8mb4&parseTime=True&loc=Local&tls=true",
-		url.QueryEscape(viper.GetString("mysql_user")),
-		url.QueryEscape(viper.GetString("mysql_passwd")),
-		fmt.Sprintf("%s:%s", viper.GetString("mysql_host"), viper.GetString("mysql_port")),
-		viper.GetString("mysql_database"))
+	MysqlDns = buildMySQLDSN()
 	TgBotToken = viper.GetString("tg_bot_token")
 	TgProxy = viper.GetString("tg_proxy")
 	TgManage = viper.GetInt64("tg_manage")
@@ -99,6 +96,30 @@ func normalizeStaticURLPath(path string) string {
 		path = "/" + path
 	}
 	return path
+}
+
+func buildMySQLDSN() string {
+	tlsConfig := "true"
+	if strings.EqualFold(strings.TrimSpace(viper.GetString("db_type")), "tidb") {
+		tlsConfig = getTiDBTLSConfigName()
+	}
+
+	MySQLTLSConfigName = tlsConfig
+	return fmt.Sprintf("%s:%s@tcp(%s)/%s?charset=utf8mb4&parseTime=True&loc=Local&tls=%s",
+		url.QueryEscape(viper.GetString("mysql_user")),
+		url.QueryEscape(viper.GetString("mysql_passwd")),
+		fmt.Sprintf("%s:%s", viper.GetString("mysql_host"), viper.GetString("mysql_port")),
+		viper.GetString("mysql_database"),
+		url.QueryEscape(tlsConfig),
+	)
+}
+
+func getTiDBTLSConfigName() string {
+	name := strings.TrimSpace(viper.GetString("tidb_tls_config_name"))
+	if name == "" {
+		return "tidb"
+	}
+	return name
 }
 
 func resolvePathFromBase(basePath string, path string, fallback string) string {
