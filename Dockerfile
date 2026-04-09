@@ -5,7 +5,7 @@ ENV CGO_ENABLED=0
 
 WORKDIR /app
 
-RUN git clone https://github.com/GMwalletApp/epusdt.git .
+RUN git clone git@github.com:one-answer/epusdt.git .
 
 WORKDIR /app/src
 RUN go mod download
